@@ -48,7 +48,13 @@ export async function proxyAndRecord(
   const fixturePath = record.fixturePath ?? "./fixtures/recorded";
   let target: URL;
   try {
-    target = new URL(pathname, upstreamUrl);
+    // Ensure the base URL ends with "/" so that its path prefix is preserved,
+    // and strip the leading "/" from pathname so it's treated as relative.
+    // Without this, `new URL("/v1/chat/completions", "https://host/api")`
+    // resolves to `https://host/v1/chat/completions` (prefix lost).
+    const base = upstreamUrl.endsWith("/") ? upstreamUrl : `${upstreamUrl}/`;
+    const relative = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+    target = new URL(relative, base);
   } catch {
     defaults.logger.error(`Invalid upstream URL for provider "${providerKey}": ${upstreamUrl}`);
     writeErrorResponse(

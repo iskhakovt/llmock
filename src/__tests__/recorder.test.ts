@@ -375,6 +375,181 @@ describe("recorder integration", () => {
 });
 
 // ---------------------------------------------------------------------------
+// URL path prefix preservation
+// ---------------------------------------------------------------------------
+
+describe("recorder URL path prefix", () => {
+  let rawServer: http.Server | undefined;
+
+  afterEach(async () => {
+    if (rawServer) {
+      await new Promise<void>((resolve) => rawServer!.close(() => resolve()));
+      rawServer = undefined;
+    }
+  });
+
+  it("preserves base URL path prefix when proxying", async () => {
+    // Upstream that echoes the request URL path in the response content
+    let receivedPath = "";
+    rawServer = http.createServer((req, res) => {
+      receivedPath = req.url ?? "";
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: `path=${receivedPath}`, role: "assistant" },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => rawServer!.listen(0, "127.0.0.1", resolve));
+    const { port } = rawServer!.address() as { port: number };
+
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "llmock-record-prefix-"));
+    // Provider URL has a path prefix — like OpenRouter's /api
+    const record: RecordConfig = {
+      providers: { openai: `http://127.0.0.1:${port}/api` },
+      fixturePath: tmpDir,
+    };
+    const logger = new Logger("silent");
+    const fixtures: Fixture[] = [];
+
+    const { req, res } = createMockReqRes();
+    const chunks: Buffer[] = [];
+    Object.assign(res, {
+      writeHead: () => res,
+      end: (data?: Buffer | string) => {
+        if (data) chunks.push(typeof data === "string" ? Buffer.from(data) : data);
+        return res;
+      },
+      setHeader: () => res,
+    });
+
+    await proxyAndRecord(
+      req,
+      res,
+      { model: "gpt-4", messages: [{ role: "user", content: "hello" }] },
+      "openai",
+      "/v1/chat/completions",
+      fixtures,
+      { record, logger },
+    );
+
+    // The upstream should have received /api/v1/chat/completions, not /v1/chat/completions
+    expect(receivedPath).toBe("/api/v1/chat/completions");
+  });
+
+  it("works correctly when base URL has no path prefix", async () => {
+    let receivedPath = "";
+    rawServer = http.createServer((req, res) => {
+      receivedPath = req.url ?? "";
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: `path=${receivedPath}`, role: "assistant" },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => rawServer!.listen(0, "127.0.0.1", resolve));
+    const { port } = rawServer!.address() as { port: number };
+
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "llmock-record-noprefix-"));
+    // Provider URL without path prefix — like api.openai.com
+    const record: RecordConfig = {
+      providers: { openai: `http://127.0.0.1:${port}` },
+      fixturePath: tmpDir,
+    };
+    const logger = new Logger("silent");
+    const fixtures: Fixture[] = [];
+
+    const { req, res } = createMockReqRes();
+    const chunks: Buffer[] = [];
+    Object.assign(res, {
+      writeHead: () => res,
+      end: (data?: Buffer | string) => {
+        if (data) chunks.push(typeof data === "string" ? Buffer.from(data) : data);
+        return res;
+      },
+      setHeader: () => res,
+    });
+
+    await proxyAndRecord(
+      req,
+      res,
+      { model: "gpt-4", messages: [{ role: "user", content: "hello" }] },
+      "openai",
+      "/v1/chat/completions",
+      fixtures,
+      { record, logger },
+    );
+
+    // Without a prefix, the path should remain /v1/chat/completions
+    expect(receivedPath).toBe("/v1/chat/completions");
+  });
+
+  it("preserves base URL path prefix with trailing slash", async () => {
+    let receivedPath = "";
+    rawServer = http.createServer((req, res) => {
+      receivedPath = req.url ?? "";
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: `path=${receivedPath}`, role: "assistant" },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => rawServer!.listen(0, "127.0.0.1", resolve));
+    const { port } = rawServer!.address() as { port: number };
+
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "llmock-record-trailslash-"));
+    // Provider URL with path prefix AND trailing slash
+    const record: RecordConfig = {
+      providers: { openai: `http://127.0.0.1:${port}/api/` },
+      fixturePath: tmpDir,
+    };
+    const logger = new Logger("silent");
+    const fixtures: Fixture[] = [];
+
+    const { req, res } = createMockReqRes();
+    const chunks: Buffer[] = [];
+    Object.assign(res, {
+      writeHead: () => res,
+      end: (data?: Buffer | string) => {
+        if (data) chunks.push(typeof data === "string" ? Buffer.from(data) : data);
+        return res;
+      },
+      setHeader: () => res,
+    });
+
+    await proxyAndRecord(
+      req,
+      res,
+      { model: "gpt-4", messages: [{ role: "user", content: "hello" }] },
+      "openai",
+      "/v1/chat/completions",
+      fixtures,
+      { record, logger },
+    );
+
+    // Should work the same whether the base URL has a trailing slash or not
+    expect(receivedPath).toBe("/api/v1/chat/completions");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Integration tests — streaming upstream → collapsed fixture
 // ---------------------------------------------------------------------------
 
